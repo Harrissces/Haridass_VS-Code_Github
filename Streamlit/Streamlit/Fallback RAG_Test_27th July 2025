@@ -1,0 +1,68 @@
+import streamlit as st
+import os
+from dotenv import load_dotenv
+from langchain.vectorstores import Chroma
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.llms import OpenAI
+from langchain.chains import RetrievalQA
+
+# Load environment variables
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Set up embeddings and vector store (Assume preloaded, else add demo docs)
+embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+persist_dir = "chroma_db"
+vector_store = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
+
+# Set up language model (for fallback)
+llm = OpenAI(openai_api_key=OPENAI_API_KEY, temperature=0.7)
+
+# Retrieval QA chain
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type="stuff",
+    retriever=vector_store.as_retriever(),
+    return_source_documents=True
+)
+
+st.set_page_config(page_title="CSE vs ECE: 50-Year Future Comparison, with RAG Fallback")
+st.title("🔍 CSE vs ECE: The Next 50 Years (RAG + Fallback)")
+
+# Chat input
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
+
+user_query = st.chat_input("Type your question (e.g., 'Future of CSE vs ECE in next 50 years')")
+
+def retrieve_with_fallback(question):
+    # Attempt retrieval-augmented answer
+    result = qa_chain({"query": question})
+    answer = result["result"]
+    sources = result.get("source_documents", [])
+    
+    # Basic fallback check: Does retrieval context look strong?
+    if not answer.strip() or "I'm not sure" in answer or len(sources) == 0:
+        # Fallback: LLM direct answer
+        st.info("No strong retrieval context. Using best-guess LLM fallback...")
+        answer = llm(f"Compare the long-term (next 50 years) future, trends, and scope of Computer Science Engineering (CSE) versus Electronics and Communications Engineering (ECE). Give future skills, industry applications, and global impact.")
+        sources = ["LLM Fallback: No retrieval sources found."]
+    return answer, sources
+
+if user_query:
+    st.session_state.chat_history.append(("user", user_query))
+    with st.spinner("Thinking..."):
+        answer, sources = retrieve_with_fallback(user_query)
+    st.session_state.chat_history.append(("assistant", answer))
+    st.chat_message("assistant").write(answer)
+    st.markdown("##### Sources / Fallback Info")
+    for idx, src in enumerate(sources):
+        st.write(f"{idx+1}. {src if isinstance(src, str) else getattr(src, 'page_content', str(src))}")
+
+# Show chat history
+st.markdown("---")
+for speaker, msg in st.session_state["chat_history"]:
+    if speaker == "user":
+        st.chat_message("user").write(msg)
+    else:
+        st.chat_message("assistant").write(msg)
