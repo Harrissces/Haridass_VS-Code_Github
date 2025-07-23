@@ -1,0 +1,108 @@
+# app.py
+
+import streamlit as st
+import os
+from dotenv import load_dotenv
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.llms import OpenAI
+from langchain.docstore.document import Document
+
+# 🔐 Load API key
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
+
+# Initialize LLM and Embeddings
+llm = OpenAI(openai_api_key=api_key, temperature=0.7)
+embeddings = OpenAIEmbeddings(openai_api_key=api_key)
+
+# 📄 Load and Embed Documents from the /data folder
+def load_documents(data_dir="data"):
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+        st.warning("📂 Created 'data' folder. Please add .txt files for the RAG to work.")
+        return []
+
+    docs = []
+    for fname in os.listdir(data_dir):
+        if fname.endswith(".txt"):
+            path = os.path.join(data_dir, fname)
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    docs.append(Document(page_content=content, metadata={"source": fname}))
+
+    if not docs:
+        st.warning("⚠️ No valid documents found in 'data/'. Please add non-empty .txt files.")
+    return docs
+
+
+documents = load_documents()
+
+if not documents:
+    st.stop()  # Stop the app from continuing
+else:
+    vectorstore = FAISS.from_documents(documents, embeddings)
+    retriever = vectorstore.as_retriever()
+
+
+# 🧠 Adaptive RAG Decision Logic
+def classify_query(query):
+    if len(query.split()) < 8:
+        return "direct_llm"
+    elif any(x in query.lower() for x in ["how", "steps", "process", "best", "tips"]):
+        return "single_retrieval"
+    else:
+        return "multi_step"
+
+def adaptive_rag_response(query):
+    strategy = classify_query(query)
+
+    if strategy == "direct_llm":
+        response = llm(query)
+        return response, "Direct LLM"
+
+    elif strategy == "single_retrieval":
+        docs = retriever.get_relevant_documents(query)
+        context = "\n".join([doc.page_content for doc in docs[:2]])
+        prompt = f"Use this context to help answer:\n{context}\n\nQuestion: {query}"
+        response = llm(prompt)
+        return response, "Single-step Retrieval"
+
+    elif strategy == "multi_step":
+        # Step 1: Retrieve info
+        initial_docs = retriever.get_relevant_documents(query)
+        context = "\n".join([doc.page_content for doc in initial_docs[:3]])
+        refine_prompt = f"Refine the following user question for deeper retrieval:\n\nOriginal: {query}\nContext:\n{context}"
+        refined_query = llm(refine_prompt)
+
+        # Step 2: Retrieve again
+        new_docs = retriever.get_relevant_documents(refined_query)
+        new_context = "\n".join([doc.page_content for doc in new_docs[:3]])
+        final_prompt = f"Based on this info:\n{new_context}\n\nAnswer this:\n{query}"
+        final_response = llm(final_prompt)
+        return final_response, "Multi-step Adaptive Retrieval"
+
+# 🧠 Streamlit UI
+st.title("🏡 Adaptive RAG Chatbot for Real Estate Sales")
+
+user_query = st.chat_input("Ask a question about real estate sales (e.g. 'What are closing tips?')")
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+if user_query:
+    st.session_state.chat_history.append(("user", user_query))
+    with st.spinner("Thinking..."):
+        answer, method = adaptive_rag_response(user_query)
+    st.session_state.chat_history.append(("bot", answer))
+    st.chat_message("user").write(user_query)
+    st.chat_message("assistant").write(answer)
+    st.markdown(f"🧠 **Method Used:** `{method}`")
+
+# Show History
+for role, text in st.session_state.chat_history:
+    if role == "user":
+        st.chat_message("user").write(text)
+    else:
+        st.chat_message("assistant").write(text)
