@@ -1,0 +1,55 @@
+import streamlit as st
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
+
+# Load environment variables
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=api_key)
+
+st.set_page_config(page_title="Real Estate Sales Chatbot", layout="wide")
+st.title("🧑‍💼 Real Estate Sales Closure Chatbot")
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# Sidebar for settings
+with st.sidebar:
+    st.header("Settings")
+    st.write("Your OpenAI API key is loaded from `.env` file.")
+    if st.button("Reset Chat"):
+        st.session_state.chat_history = []
+        st.success("Chat history cleared.")
+
+def get_bot_response(messages):
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",  # Or "gpt-4" if you have access
+        messages=messages,
+        temperature=0.7,
+        max_tokens=400
+    )
+    return response.choices[0].message.content
+
+# Display chat history
+for sender, msg in st.session_state.chat_history:
+    if sender == "user":
+        st.chat_message("user").write(msg)
+    else:
+        st.chat_message("assistant").write(msg)
+
+# Chat input box
+user_input = st.chat_input("Ask about closing sales for plots/apartments...")
+
+if user_input:
+    st.session_state.chat_history.append(("user", user_input))
+    chat_messages = [
+        {"role": "system", "content": "You are a highly skilled real estate sales advisor. Give actionable advice, best practices, and techniques for closing property/plot/apartment sales. Respond conversationally and helpfully."}
+    ] + [
+        {"role": ("user" if sender == "user" else "assistant"), "content": msg}
+        for sender, msg in st.session_state.chat_history
+    ]
+    with st.spinner("AI is thinking..."):
+        bot_response = get_bot_response(chat_messages)
+    st.session_state.chat_history.append(("assistant", bot_response))
+    st.chat_message("assistant").write(bot_response)
