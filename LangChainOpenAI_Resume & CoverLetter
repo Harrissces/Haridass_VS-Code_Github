@@ -1,0 +1,103 @@
+import streamlit as st
+from langchain.chains import ConversationChain
+from langchain.chat_models import ChatOpenAI
+from langchain.memory import ConversationBufferMemory
+import openai
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Set Streamlit page configuration
+st.set_page_config(page_title="AI Chatbot Cover Letter Generator", layout="centered")
+st.title("🤖 AI Chatbot Cover Letter Generator")
+
+# Sidebar for API Key
+with st.sidebar:
+    openai_api_key = st.text_input("Enter your OpenAI API Key", type="password")
+    st.markdown("---")
+    st.info("This app uses your OpenAI key to generate a personalized cover letter via chatbot.")
+
+if not openai_api_key:
+    st.warning("Please enter your OpenAI API Key to continue.")
+    st.stop()
+
+# Input fields
+job_title = st.text_input("Job Title")
+company_name = st.text_input("Company Name")
+hiring_manager = st.text_input("Hiring Manager's Name")
+hiring_email = st.text_input("Hiring Manager's Email")
+
+job_description = st.text_area("Paste the Job Description")
+resume_text = st.text_area("Paste Your Resume")
+resume_file = st.file_uploader("Or Upload Your Resume (PDF or TXT)", type=["pdf", "txt"])
+
+# Load uploaded resume
+if resume_file is not None:
+    if resume_file.type == "application/pdf":
+        import PyPDF2
+        pdf_reader = PyPDF2.PdfReader(resume_file)
+        resume_text = " ".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
+    elif resume_file.type == "text/plain":
+        resume_text = resume_file.read().decode("utf-8")
+
+# Run chatbot generation
+if st.button("Run Chatbot and Generate Cover Letter"):
+    if not all([job_title, company_name, hiring_manager, hiring_email, job_description, resume_text]):
+        st.error("Please fill in all required fields.")
+        st.stop()
+
+    os.environ["OPENAI_API_KEY"] = openai_api_key
+    llm = ChatOpenAI(temperature=0.7)
+    memory = ConversationBufferMemory()
+    chatbot = ConversationChain(llm=llm, memory=memory)
+
+    with st.spinner("Analyzing and generating your cover letter..."):
+        # Analyze resume vs job description
+        analysis_prompt = f"""
+        You are a career guidance AI assistant. Analyze the user's resume and the job description.
+        
+        Job Title: {job_title}
+        Company: {company_name}
+        Hiring Manager: {hiring_manager}
+
+        Job Description:
+        {job_description}
+
+        Resume:
+        {resume_text}
+
+        Provide:
+        1. A list of matching skills/competencies.
+        2. A list of non-matching or missing skills/competencies.
+        3. A rating on how suitable the user is for the job (Excellent, Good, Fair).
+        """
+        analysis = chatbot.predict(input=analysis_prompt)
+
+        # Generate Cover Letter
+        cover_letter_prompt = f"""
+        Write a professional, tailored cover letter for the following role:
+
+        Job Title: {job_title}
+        Company: {company_name}
+        Hiring Manager: {hiring_manager}
+        Hiring Email: {hiring_email}
+
+        Job Description:
+        {job_description}
+
+        Candidate Resume:
+        {resume_text}
+
+        Use a formal yet engaging tone, highlight relevant skills, and personalize for the company.
+        """
+        cover_letter = chatbot.predict(input=cover_letter_prompt)
+
+    st.subheader("🔍 Resume vs Job Description Analysis")
+    st.markdown(analysis)
+
+    st.subheader("✉️ Generated Cover Letter")
+    st.code(cover_letter, language='markdown')
+
+    st.download_button("📥 Download Cover Letter", cover_letter, file_name="cover_letter.txt")
